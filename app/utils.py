@@ -116,6 +116,4 @@ def set_page_configs():
         """,
         unsafe_allow_html=True
     )
-    st.title("NSFW Detection Tool for Images and Videos")
-    st.header("Upload images or videos to classify, detect, and blur explicit content.")
-    st.write("Detects and classifies content under these 5 classes: drawing, hentai, normal, porn, and sexy.")
+    

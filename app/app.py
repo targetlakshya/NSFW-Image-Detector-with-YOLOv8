@@ -2,9 +2,10 @@ import tempfile
 import streamlit as st
 from ultralytics import YOLO
 from ultralytics.utils.plotting import Annotator, colors
-from PIL import Image, ImageFilter
+from PIL import Image
 import os
 import cv2
+import numpy as np
 from pillow_heif import register_heif_opener
 import utils
 from concurrent.futures import ThreadPoolExecutor
@@ -39,6 +40,111 @@ if "results_cache" not in st.session_state:
 
 names = classification_model.names
 
+# Add custom CSS for centering and theming
+st.markdown("""
+    <style>
+        /* Global dark theme */
+        .stApp {
+            background-color: #0a192f;
+            color: white;
+            text-align: center;
+            font-family: 'Arial', sans-serif;
+        }
+
+        /* Glassmorphism effect */
+        .glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 10px;
+            box-shadow: 0 4px 6px rgba(255, 255, 255, 0.1);
+        }
+
+        /* Heading Styling */
+        h1 {
+            color: #64ffda;
+            font-size: 2.5rem;
+            text-shadow: 2px 2px 10px rgba(100, 255, 218, 0.8);
+        }
+
+        /* Buttons with hover effect */
+        .stButton>button {
+            background-color: #112240;
+            color: white;
+            border-radius: 8px;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s ease-in-out;
+            border: 2px solid #64ffda;
+        }
+
+        .stButton>button:hover {
+            background-color: #64ffda;
+            color: #0a192f;
+            transform: scale(1.1);
+            box-shadow: 0px 0px 15px rgba(100, 255, 218, 0.6);
+        }
+
+        /* Animated images */
+        img {
+            display: block;
+            margin: 0 auto;
+            border-radius: 10px;
+            box-shadow: 0px 0px 10px rgba(100, 255, 218, 0.5);
+            transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+        }
+
+        img:hover {
+            transform: scale(1.05);
+            box-shadow: 0px 0px 20px rgba(100, 255, 218, 0.8);
+        }
+
+        /* Text Inputs */
+        .stTextInput>div>div>input {
+            background-color: #1f2a48;
+            color: white;
+            border-radius: 8px;
+            padding: 10px;
+            border: 1px solid #64ffda;
+        }
+
+        /* NSFW Warning */
+        .nsfw-warning {
+            color: red;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 0px 0px 8px rgba(255, 0, 0, 0.6);
+        }
+
+        /* Not NSFW Text */
+        .not-nsfw {
+            color: green;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 0px 0px 8px rgba(0, 255, 0, 0.6);
+        }
+
+        /* Centering Streamlit Components */
+        .css-18ni7ap.e8zbici2 {
+            justify-content: center;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2rem;
+            }
+            .stButton>button {
+                font-size: 14px;
+                padding: 10px 20px;
+            }
+        }
+    </style>
+""", unsafe_allow_html=True)
+    
+
 def classify_image(image):
     results = classification_model(image, verbose=True)
     category = results[0].probs.top5
@@ -48,20 +154,18 @@ def segment_image(image):
     results = segmentation_model(image, agnostic_nms=True, retina_masks=True, verbose=True)
     return results
 
-def override_cls(cat, seg):
-    img_is_explicit = False if seg[0].boxes.cls.cpu().tolist() == [] else True
-    cat_override = names[cat[0]]
-    if img_is_explicit and not cat[0] in [1, 3]:
-        if cat[1] == 1:
-            cat_override = names[1]
-        else:
-            cat_override = names[3]
-    return cat_override
+def simplify_classification(top_class_index):
+    top_class_name = names[top_class_index].lower()
+    nsfw_keywords = ["porn", "hentai", "sexy", "nude", "xxx"]
+    if top_class_name in nsfw_keywords:
+        return "NSFW"
+    return "Not NSFW"
 
-st.write("Upload image(s) to classify and segment sensitive regions.")
+st.title("🔍 NSFW Image Detector")
+st.write("Upload image(s) to classify them as NSFW or Not NSFW.")
 
 uploaded_files = st.file_uploader(
-    "📁 Choose an image...",
+    "📁 Choose image(s)...",
     type=["bmp", "dng", "jpg", "jpeg", "mpo", "png", "tif", "tiff", "webp", "pfm", "HEIC"],
     accept_multiple_files=True
 )
@@ -110,53 +214,38 @@ if uploaded_files:
 
         if current_image_path in st.session_state.results_cache:
             cached_results = st.session_state.results_cache[current_image_path]
-            category = cached_results["category"]
-            st.success(f"**Classification Result:** {category}")
+            classification = cached_results["category"]
+            st.success(f"**Classification Result:** {classification}")
         else:
             with st.spinner("Classifying image..."):
                 with ThreadPoolExecutor() as executor:
                     future = executor.submit(classify_image, image)
                     category = future.result()
-                    future = executor.submit(override_cls, category, segmentation_results)
-                    result = future.result()
-                    st.success(f"**Classification Result:** {result}")
+                    classification = simplify_classification(category[0])
+                    st.session_state.results_cache[current_image_path] = {"category": classification}
+                    st.success(f"**Classification Result:** {classification}")
 
-        if (category == 'porn' or category == 'hentai') or img_is_explicit:
-
+        if classification == "NSFW" or img_is_explicit:
             boxes = segmentation_results[0].boxes.xyxy.cpu().tolist()
-            clss = segmentation_results[0].boxes.cls.cpu().tolist()
-            confs = segmentation_results[0].boxes.conf.cpu().tolist()
 
-            image_with_blur = image.copy()
-            image_with_boxes = image.copy()
-            annotator = Annotator(image_with_boxes, line_width=2, example=segmentation_results[0].names)
-
-            for box, cls, conf in zip(boxes, clss, confs):
-                class_name = segmentation_results[0].names[int(cls)]
-                label = f"{class_name} ({conf:.2f})"
-                annotator.box_label(box, color=colors(int(cls), True), label=label)
-
-            blur_ratio = st.slider("Blur Ratio", min_value=0, max_value=100, value=85)
+            image_with_circles = np.array(image)
+            image_with_circles = cv2.cvtColor(image_with_circles, cv2.COLOR_RGB2BGR)
 
             for box in boxes:
-                obj = image_with_blur.crop((int(box[0]), int(box[1]), int(box[2]), int(box[3])))
-                blur_obj = obj.filter(ImageFilter.GaussianBlur(radius=blur_ratio))
-                if blur_obj.mode == 'RGBA':
-                    blur_obj = blur_obj.convert('RGB')
-                image_with_blur.paste(blur_obj, (int(box[0]), int(box[1])))
+                x1, y1, x2, y2 = map(int, box)
+                center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
+                radius = max((x2 - x1), (y2 - y1)) // 3
+                cv2.circle(image_with_circles, (center_x, center_y), radius, (0, 0, 255), thickness=4)
 
-            blur_sensitive_regions = st.checkbox("Blur sensitive regions", True)
+            image_with_circles = cv2.cvtColor(image_with_circles, cv2.COLOR_BGR2RGB)
+            image_with_circles = Image.fromarray(image_with_circles)
+
             _, cent_co, _ = st.columns(3)
-            if blur_sensitive_regions:
-                with cent_co:
-                    st.image(image_with_blur, caption="Image with Blurred Regions", use_container_width=True)
-            else:
-                with cent_co:
-                    st.image(image_with_boxes, caption="Image with Detected Regions", use_container_width=True)
-    else:
-        st.warning("No images to display.")
+            with cent_co:
+                st.image(image_with_circles, caption="Sensitive regions marked", use_container_width=True)
+else:
+    st.warning("Upload images to begin.")
 
 st.markdown("---")
-st.markdown("📌 **Tip:** Upload one or more images to automatically classify and detect sensitive regions. Adjust the blur using the slider above.")
-st.markdown("---")
+st.markdown("📌 **Tip:** NSFW classification and visual marking happens automatically.")
 st.markdown("Made with ❤️ by Lakshya", unsafe_allow_html=True)
