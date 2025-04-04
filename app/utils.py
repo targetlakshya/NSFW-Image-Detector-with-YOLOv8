@@ -31,8 +31,8 @@ def delete_uploaded_videos():
 
 def set_page_configs():
     st.set_page_config(
-        page_title='NSFW Detector & Annotator',
-        page_icon=':peach:',
+        page_title='NSFW Detector by Lakshya',
+        page_icon='',
         layout="wide",
         initial_sidebar_state="auto",
         menu_items=None
