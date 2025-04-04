@@ -1,22 +1,20 @@
-import tempfile
-import streamlit as st
-from ultralytics import YOLO
-from ultralytics.utils.plotting import Annotator, colors
-from PIL import Image
 import os
 import cv2
 import numpy as np
+import streamlit as st
+from ultralytics import YOLO
+from PIL import Image
 from pillow_heif import register_heif_opener
 import utils
 from concurrent.futures import ThreadPoolExecutor
 
-# Enable support for HEIC images
+# Enable HEIC support
 register_heif_opener()
 
 # Set theme and page layout
 utils.set_page_configs()
 
-# Directory to save uploaded images
+# Save uploaded images in a directory
 media_dir_root = "uploaded_media"
 image_dir = f'{media_dir_root}/images'
 os.makedirs(image_dir, exist_ok=True)
@@ -28,33 +26,115 @@ def load_models():
     return classification_model, segmentation_model
 
 classification_model, segmentation_model = load_models()
+names = classification_model.names
 
 if "image_index" not in st.session_state:
     st.session_state.image_index = 0
-
 if "saved_image_paths" not in st.session_state:
     st.session_state.saved_image_paths = []
-
 if "results_cache" not in st.session_state:
     st.session_state.results_cache = {}
 
-names = classification_model.names
-
 def classify_image(image):
-    results = classification_model(image, verbose=True)
-    top_class_index = results[0].probs.top1
-    return top_class_index
+    results = classification_model(image, verbose=False)
+    return results[0].probs.top1
 
 def segment_image(image):
-    results = segmentation_model(image, agnostic_nms=True, retina_masks=True, verbose=True)
+    results = segmentation_model(image, agnostic_nms=True, retina_masks=True, verbose=False)
     return results
 
 def simplify_classification(top_class_index):
-    """Mark images as NSFW only if classified as 'porn'. Everything else is Not NSFW."""
+    """Only mark images as NSFW if classified as 'porn'. All others are Not NSFW."""
     top_class_name = names[top_class_index].lower()
-    if top_class_name == "porn":
-        return "NSFW"
-    return "Not NSFW"
+    return "NSFW" if top_class_name == "porn" else "Not NSFW"
+
+# Inject CSS styles for better UI
+st.markdown("""
+    <style>
+        /* Global dark theme */
+        .stApp {
+            background-color: #0a192f;
+            color: white;
+            text-align: center;
+            font-family: 'Arial', sans-serif;
+        }
+
+        /* Glassmorphism effect */
+        .glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 10px;
+            box-shadow: 0 4px 6px rgba(255, 255, 255, 0.1);
+        }
+
+        /* Heading Styling */
+        h1 {
+            color: #64ffda;
+            font-size: 2.5rem;
+            text-shadow: 2px 2px 10px rgba(100, 255, 218, 0.8);
+        }
+
+        /* Buttons with hover effect */
+        .stButton>button {
+            background-color: #112240;
+            color: white;
+            border-radius: 8px;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s ease-in-out;
+            border: 2px solid #64ffda;
+        }
+
+        .stButton>button:hover {
+            background-color: #64ffda;
+            color: #0a192f;
+            transform: scale(1.1);
+            box-shadow: 0px 0px 15px rgba(100, 255, 218, 0.6);
+        }
+
+        /* Animated images */
+        img {
+            display: block;
+            margin: 0 auto;
+            border-radius: 10px;
+            box-shadow: 0px 0px 10px rgba(100, 255, 218, 0.5);
+            transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+        }
+
+        img:hover {
+            transform: scale(1.05);
+            box-shadow: 0px 0px 20px rgba(100, 255, 218, 0.8);
+        }
+
+        /* Text Inputs */
+        .stTextInput>div>div>input {
+            background-color: #1f2a48;
+            color: white;
+            border-radius: 8px;
+            padding: 10px;
+            border: 1px solid #64ffda;
+        }
+
+        /* NSFW Warning */
+        .nsfw-warning {
+            color: red;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 0px 0px 8px rgba(255, 0, 0, 0.6);
+        }
+
+        /* Not NSFW Text */
+        .not-nsfw {
+            color: green;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 0px 0px 8px rgba(0, 255, 0, 0.6);
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 st.title("🔍 NSFW Image Detector")
 st.write("Upload image(s) to classify them as NSFW or Not NSFW.")
@@ -85,7 +165,7 @@ if uploaded_files:
     if st.session_state.saved_image_paths:
         current_image_path = st.session_state.saved_image_paths[st.session_state.image_index]
         image = Image.open(current_image_path)
-        
+
         _, cent_co, _ = st.columns(3)
         with cent_co:
             st.image(image, caption=f"Image {st.session_state.image_index + 1} of {len(st.session_state.saved_image_paths)}", use_container_width=True)
@@ -106,7 +186,6 @@ if uploaded_files:
                 future = executor.submit(segment_image, image)
                 segmentation_results = future.result()
 
-        # Segmentation only detects explicit regions, doesn't decide NSFW status
         img_is_explicit = len(segmentation_results[0].boxes.cls.cpu().tolist()) > 0
 
         if current_image_path in st.session_state.results_cache:
@@ -122,11 +201,9 @@ if uploaded_files:
                     st.session_state.results_cache[current_image_path] = {"category": classification}
                     st.success(f"**Classification Result:** {classification}")
 
-        # Show NSFW warning if classified as NSFW
         if classification == "NSFW":
             st.markdown("<p class='nsfw-warning'>⚠️ NSFW Content Detected!</p>", unsafe_allow_html=True)
-            
-            # Mark detected regions
+
             boxes = segmentation_results[0].boxes.xyxy.cpu().tolist()
             image_with_circles = np.array(image)
             image_with_circles = cv2.cvtColor(image_with_circles, cv2.COLOR_RGB2BGR)
@@ -149,5 +226,5 @@ else:
     st.warning("Upload images to begin.")
 
 st.markdown("---")
-st.markdown("📌 **Tip:** NSFW classification and visual marking happens automatically.")
+st.markdown("📌 **Tip:** NSFW classification and visual marking happen automatically.")
 st.markdown("Made with ❤️ by Lakshya", unsafe_allow_html=True)
