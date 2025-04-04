@@ -1,0 +1,6 @@
+# Ignore run time generated artifacts
+uploaded_media/
+feedbacks.json
+
+# Ignore pycache
+app/__pycache__/
